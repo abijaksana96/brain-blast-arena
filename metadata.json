@@ -1,0 +1,5 @@
+{
+  "name": "Brain Blast Arena",
+  "description": "A high-stakes quiz competition dashboard featuring timer management, buzzer simulation, and automatic scoring rules for the 'Brain Blast' round.",
+  "requestFramePermissions": []
+}
