@@ -19,4 +19,12 @@ export const QUESTIONS: Question[] = [
   })),
 ];
 
+// Cadangan soal jika terjadi undo (5 soal)
+export const BACKUP_QUESTIONS: Question[] = Array.from({ length: 5 }).map((_, i) => ({
+  id: 100 + i + 1,
+  difficulty: Difficulty.EASY,
+  points: 5,
+  imageUrl: `https://picsum.photos/800/600?random=${100 + i + 1}`,
+}));
+
 export const INITIAL_TEAMS_COUNT = 10;

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { GamePhase, Team, Difficulty, GameState } from './types';
-import { QUESTIONS, QUESTION_DURATION, ANSWER_DURATION, INITIAL_TEAMS_COUNT } from './constants';
+import { QUESTIONS, BACKUP_QUESTIONS, QUESTION_DURATION, ANSWER_DURATION, INITIAL_TEAMS_COUNT } from './constants';
 import { Button } from './components/Button';
 import { Timer } from './components/Timer';
 import { Leaderboard } from './components/Leaderboard';
@@ -16,13 +16,29 @@ const App: React.FC = () => {
     mainTimer: QUESTION_DURATION,
     answerTimer: ANSWER_DURATION,
   });
+  const [lastAnswerStatus, setLastAnswerStatus] = useState<'correct' | 'wrong' | 'timeout' | null>(null);
+  const [lastScoreChange, setLastScoreChange] = useState<null | {
+    teamId: string;
+    prevRoundScore: number;
+    prevTotalScore: number;
+    delta: number;
+  }>(null);
+  const [backupQuestionIndex, setBackupQuestionIndex] = useState(0);
+  const [useBackupQuestion, setUseBackupQuestion] = useState(false);
 
   // Refs for intervals to clear them properly
   const mainTimerRef = useRef<number | null>(null);
   const answerTimerRef = useRef<number | null>(null);
+  const bgAudioRef = useRef<HTMLAudioElement | null>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const lastBeepRef = useRef<number | null>(null);
+  const lastBoomRef = useRef<boolean>(false);
+  const bgVolumeRef = useRef<number | null>(null);
 
   // --- HELPERS ---
-  const currentQuestion = QUESTIONS[gameState.currentQuestionIndex];
+  const fallbackQuestion = QUESTIONS[gameState.currentQuestionIndex];
+  const backupQuestion = BACKUP_QUESTIONS[backupQuestionIndex];
+  const currentQuestion = useBackupQuestion && backupQuestion ? backupQuestion : fallbackQuestion;
 
   // --- INITIALIZATION ---
   const handleSetupComplete = (setupTeams: Team[]) => {
@@ -32,7 +48,23 @@ const App: React.FC = () => {
 
   // --- GAME LOOP LOGIC ---
 
+  const startQuestionAudio = () => {
+    const audio = bgAudioRef.current;
+    if (!audio) return;
+    audio.pause();
+    audio.onended = null;
+    audio.src = '/3-Minutes-Quiz-Music-for-Countdown.mp3';
+    audio.loop = true;
+    audio.currentTime = 0;
+    audio.play().catch(() => { });
+  };
+
   const startRound = () => {
+    setLastAnswerStatus(null);
+    setLastScoreChange(null);
+    setUseBackupQuestion(false);
+    startQuestionAudio();
+
     setGameState(prev => ({ ...prev, phase: GamePhase.QUESTION_DISPLAY, mainTimer: QUESTION_DURATION }));
   };
 
@@ -42,6 +74,10 @@ const App: React.FC = () => {
       return;
     }
 
+    setLastAnswerStatus(null);
+    setLastScoreChange(null);
+    setUseBackupQuestion(false);
+    startQuestionAudio();
     setGameState(prev => ({
       ...prev,
       currentQuestionIndex: prev.currentQuestionIndex + 1,
@@ -51,6 +87,39 @@ const App: React.FC = () => {
       activeTeamId: null,
     }));
   }, [gameState.currentQuestionIndex]);
+
+  const enterFeedback = (status: 'correct' | 'wrong' | 'timeout') => {
+    setLastAnswerStatus(status);
+    setGameState(prev => ({ ...prev, phase: GamePhase.FEEDBACK }));
+  };
+
+  const handleUndoLastChange = () => {
+    if (!lastScoreChange) return;
+    const hasBackup = backupQuestionIndex < BACKUP_QUESTIONS.length;
+    setTeams(prevTeams => prevTeams.map(team => {
+      if (team.id === lastScoreChange.teamId) {
+        return {
+          ...team,
+          roundScore: lastScoreChange.prevRoundScore,
+          totalScore: lastScoreChange.prevTotalScore,
+        };
+      }
+      return team;
+    }));
+    setLastAnswerStatus(null);
+    setGameState(prev => ({
+      ...prev,
+      phase: GamePhase.QUESTION_DISPLAY,
+      activeTeamId: null,
+      mainTimer: QUESTION_DURATION,
+      answerTimer: ANSWER_DURATION,
+    }));
+    setUseBackupQuestion(hasBackup);
+    if (hasBackup) {
+      setBackupQuestionIndex(prev => prev + 1);
+    }
+    setLastScoreChange(null);
+  };
 
   // --- TIMER LOGIC ---
 
@@ -62,7 +131,8 @@ const App: React.FC = () => {
           if (prev.mainTimer <= 0) {
             // Time ran out, question burns
             if (mainTimerRef.current) clearInterval(mainTimerRef.current);
-            return { ...prev, phase: GamePhase.FEEDBACK }; // Briefly show fail then next
+            enterFeedback('timeout');
+            return prev;
           }
           return { ...prev, mainTimer: prev.mainTimer - 1 };
         });
@@ -92,17 +162,137 @@ const App: React.FC = () => {
     return () => { if (answerTimerRef.current) clearInterval(answerTimerRef.current); };
   }, [gameState.phase]); // Dependency handled via internal logic calling handleAnswerVerdict
 
+  // Duck countdown audio volume during TEAM_ANSWERING
+  useEffect(() => {
+    const audio = bgAudioRef.current;
+    if (!audio) return;
+
+    const isQuestionTrack = audio.src.includes('3-Minutes-Quiz-Music-for-Countdown.mp3');
+    if (gameState.phase === GamePhase.TEAM_ANSWERING && isQuestionTrack) {
+      if (bgVolumeRef.current === null) {
+        bgVolumeRef.current = audio.volume;
+      }
+      audio.volume = 0.01;
+      return;
+    }
+
+    if (bgVolumeRef.current !== null) {
+      audio.volume = bgVolumeRef.current;
+      bgVolumeRef.current = null;
+    }
+  }, [gameState.phase]);
+
+  // Beep countdown during TEAM_ANSWERING
+  useEffect(() => {
+    if (gameState.phase !== GamePhase.TEAM_ANSWERING) {
+      lastBeepRef.current = null;
+      lastBoomRef.current = false;
+      return;
+    }
+
+    const current = gameState.answerTimer;
+    if (current <= 0 || lastBeepRef.current === current) return;
+
+    if (!audioCtxRef.current) {
+      audioCtxRef.current = new (window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext!)();
+    }
+
+    const ctx = audioCtxRef.current;
+    if (ctx.state === 'suspended') {
+      ctx.resume().catch(() => { });
+    }
+
+    const oscillator = ctx.createOscillator();
+    const gain = ctx.createGain();
+    const now = ctx.currentTime;
+
+    const freq = 1100;
+
+    oscillator.frequency.setValueAtTime(freq, now);
+    oscillator.type = 'sine';
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(0.6, now + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.2);
+
+    oscillator.connect(gain);
+    gain.connect(ctx.destination);
+
+    oscillator.start(now);
+    oscillator.stop(now + 0.18);
+
+    lastBeepRef.current = current;
+  }, [gameState.phase, gameState.answerTimer]);
+
+  // Boom sound when countdown ends
+  useEffect(() => {
+    if (gameState.phase !== GamePhase.TEAM_ANSWERING) return;
+    if (gameState.answerTimer !== 0 || lastBoomRef.current) return;
+
+    if (!audioCtxRef.current) {
+      audioCtxRef.current = new (window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext!)();
+    }
+
+    const ctx = audioCtxRef.current;
+    if (ctx.state === 'suspended') {
+      ctx.resume().catch(() => { });
+    }
+
+    const oscillatorLow = ctx.createOscillator();
+    const oscillatorMid = ctx.createOscillator();
+    const gain = ctx.createGain();
+    const noiseBuffer = ctx.createBuffer(1, ctx.sampleRate * 0.35, ctx.sampleRate);
+    const noiseData = noiseBuffer.getChannelData(0);
+    for (let i = 0; i < noiseData.length; i += 1) {
+      noiseData[i] = (Math.random() * 2 - 1) * (1 - i / noiseData.length);
+    }
+    const noise = ctx.createBufferSource();
+    const noiseGain = ctx.createGain();
+    noise.buffer = noiseBuffer;
+    const now = ctx.currentTime;
+
+    oscillatorLow.type = 'sine';
+    oscillatorLow.frequency.setValueAtTime(120, now);
+    oscillatorLow.frequency.exponentialRampToValueAtTime(45, now + 0.4);
+
+    oscillatorMid.type = 'triangle';
+    oscillatorMid.frequency.setValueAtTime(220, now);
+    oscillatorMid.frequency.exponentialRampToValueAtTime(70, now + 0.35);
+
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(0.8, now + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.5);
+
+    noiseGain.gain.setValueAtTime(0.0001, now);
+    noiseGain.gain.exponentialRampToValueAtTime(0.4, now + 0.01);
+    noiseGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.25);
+
+    oscillatorLow.connect(gain);
+    oscillatorMid.connect(gain);
+    noise.connect(noiseGain);
+    noiseGain.connect(gain);
+    gain.connect(ctx.destination);
+
+    oscillatorLow.start(now);
+    oscillatorMid.start(now);
+    noise.start(now);
+    oscillatorLow.stop(now + 0.55);
+    oscillatorMid.stop(now + 0.45);
+    noise.stop(now + 0.25);
+
+    lastBoomRef.current = true;
+  }, [gameState.phase, gameState.answerTimer]);
+
   // --- ACTIONS ---
 
   const handleTeamBuzz = (teamId: string) => {
     // Only allow buzz during Question Display
-    if (gameState.phase !== GamePhase.QUESTION_DISPLAY) return;
+    if (gameState.phase !== GamePhase.QUESTION_DISPLAY && gameState.phase !== GamePhase.TEAM_ANSWERING) return;
 
     setGameState(prev => ({
       ...prev,
       phase: GamePhase.TEAM_ANSWERING,
       activeTeamId: teamId,
-      answerTimer: ANSWER_DURATION // Reset 5s timer
+      answerTimer: prev.activeTeamId === teamId ? prev.answerTimer : ANSWER_DURATION // Reset only when switching team
     }));
   };
 
@@ -116,10 +306,18 @@ const App: React.FC = () => {
     setTeams(prevTeams => prevTeams.map(team => {
       if (team.id === teamId) {
         const pointChange = isCorrect ? points : -points;
+        const nextRoundScore = team.roundScore + pointChange;
+        const nextTotalScore = team.initialScore + nextRoundScore;
+        setLastScoreChange({
+          teamId,
+          prevRoundScore: team.roundScore,
+          prevTotalScore: team.totalScore,
+          delta: pointChange,
+        });
         return {
           ...team,
-          roundScore: team.roundScore + pointChange,
-          totalScore: team.totalScore + pointChange
+          roundScore: nextRoundScore,
+          totalScore: nextTotalScore
         };
       }
       return team;
@@ -130,25 +328,57 @@ const App: React.FC = () => {
     // Wrong/Timeout -> Minus Points -> Burn Question -> Next Question
     // In both cases, we move to next question (per rule 7: "soal langsung hangus")
 
-    // Brief delay to show result? Let's just go to feedback state for 2 seconds then next
-    setGameState(prev => ({ ...prev, phase: GamePhase.FEEDBACK }));
-    setTimeout(() => {
-      nextQuestion();
-    }, 2000);
+    // Show result and wait for manual continue
+    if (isTimeout) {
+      enterFeedback('timeout');
+    } else {
+      enterFeedback(isCorrect ? 'correct' : 'wrong');
+    }
   };
 
   const handleSkip = () => {
-    setGameState(prev => ({ ...prev, phase: GamePhase.FEEDBACK }));
-    setTimeout(() => {
-      nextQuestion();
-    }, 1000);
+    enterFeedback('timeout');
   };
 
   // --- KEYBOARD LISTENER ---
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Only allow buzz during QUESTION_DISPLAY
-      if (gameState.phase !== GamePhase.QUESTION_DISPLAY) return;
+      if (e.key === 'Escape') {
+        setGameState(prev => ({
+          ...prev,
+          phase: GamePhase.ROUND_OVER,
+          activeTeamId: null,
+        }));
+        return;
+      }
+      if ((e.key === 'l' || e.key === 'L') && gameState.phase === GamePhase.FEEDBACK) {
+        nextQuestion();
+        return;
+      }
+      if ((e.key === 'u' || e.key === 'U') && gameState.phase === GamePhase.FEEDBACK && lastScoreChange) {
+        handleUndoLastChange();
+        return;
+      }
+      if ((e.key === 'q' || e.key === 'Q') && gameState.phase === GamePhase.INTRO) {
+        startRound();
+        return;
+      }
+      if (gameState.phase === GamePhase.TEAM_ANSWERING) {
+        if (e.key === 'b' || e.key === 'B') {
+          handleAnswerVerdict(true);
+          return;
+        }
+        if (e.key === 's' || e.key === 'S') {
+          handleAnswerVerdict(false);
+          return;
+        }
+        if (e.key === 't' || e.key === 'T') {
+          handleAnswerVerdict(false, true);
+          return;
+        }
+      }
+      // Only allow buzz during QUESTION_DISPLAY or TEAM_ANSWERING
+      if (gameState.phase !== GamePhase.QUESTION_DISPLAY && gameState.phase !== GamePhase.TEAM_ANSWERING) return;
 
       const key = e.key;
       let teamIndex = -1;
@@ -167,6 +397,11 @@ const App: React.FC = () => {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [gameState.phase, teams]);
+
+  // --- AUDIO INIT ---
+  useEffect(() => {
+    bgAudioRef.current = document.getElementById('bg-audio') as HTMLAudioElement | null;
+  }, []);
 
   // --- RENDER HELPERS ---
 
@@ -266,9 +501,22 @@ const App: React.FC = () => {
                   {gameState.phase === GamePhase.FEEDBACK ? (
                     <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-900 z-20 gap-4">
                       <span className="text-2xl lg:text-4xl font-display font-bold text-slate-300 text-center px-4">
-                        {gameState.activeTeamId ? "POIN DIPERBARUI" : "WAKTU HABIS"}
+                        {lastAnswerStatus === 'correct'
+                          ? 'JAWABAN BENAR'
+                          : lastAnswerStatus === 'wrong'
+                            ? 'JAWABAN SALAH'
+                            : 'WAKTU HABIS'}
                       </span>
-                      {!gameState.activeTeamId && (
+                      <div className="flex flex-col sm:flex-row items-center gap-3">
+                        {lastScoreChange && (
+                          <Button
+                            onClick={handleUndoLastChange}
+                            variant="secondary"
+                            className="flex items-center gap-2"
+                          >
+                            Undo 1 Langkah
+                          </Button>
+                        )}
                         <Button
                           onClick={nextQuestion}
                           variant="secondary"
@@ -277,7 +525,7 @@ const App: React.FC = () => {
                           <SkipForward className="w-5 h-5" />
                           Lanjut Soal Berikutnya
                         </Button>
-                      )}
+                      </div>
                     </div>
                   ) : (
                     <img
