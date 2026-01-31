@@ -1,5 +1,6 @@
 export enum GamePhase {
   SETUP = 'SETUP',
+  BRIEFING = 'BRIEFING', // Pre-round briefing slides
   INTRO = 'INTRO',
   QUESTION_DISPLAY = 'QUESTION_DISPLAY', // 3 minutes timer
   TEAM_ANSWERING = 'TEAM_ANSWERING', // 5 seconds timer

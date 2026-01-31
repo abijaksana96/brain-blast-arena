@@ -39,6 +39,71 @@
     ::-webkit-scrollbar-thumb:hover {
       background: #64748b;
     }
+
+    /* Briefing slide animations */
+    @keyframes fadeSlideUp {
+      from {
+        opacity: 0;
+        transform: translateY(20px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    @keyframes fadeSlideDown {
+      from {
+        opacity: 1;
+        transform: translateY(0);
+      }
+
+      to {
+        opacity: 0;
+        transform: translateY(-20px);
+      }
+    }
+
+    @keyframes shimmer {
+      0% {
+        background-position: -200% 0;
+      }
+
+      100% {
+        background-position: 200% 0;
+      }
+    }
+
+    @keyframes float {
+
+      0%,
+      100% {
+        transform: translateY(0px);
+      }
+
+      50% {
+        transform: translateY(-10px);
+      }
+    }
+
+    .animate-fade-slide-up {
+      animation: fadeSlideUp 0.5s ease-out forwards;
+    }
+
+    .animate-fade-slide-down {
+      animation: fadeSlideDown 0.4s ease-in forwards;
+    }
+
+    .animate-shimmer {
+      background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.1), transparent);
+      background-size: 200% 100%;
+      animation: shimmer 2s infinite;
+    }
+
+    .animate-float {
+      animation: float 3s ease-in-out infinite;
+    }
   </style>
   <script type="importmap">
 {
@@ -55,7 +120,11 @@
 
 <body>
   <audio id="bg-audio" loop preload="auto">
-    <source src="/quiz-background-loop-thinking-news-275636.mp3" type="audio/mpeg">
+    <!-- Main backsound disabled before round start. Source removed to prevent autoplay. -->
+  </audio>
+  <!-- Breaking news effect: single controllable audio element -->
+  <audio id="breaking-news-audio" preload="auto">
+    <source src="/breaking-news-report-tension-flash-434566.mp3" type="audio/mpeg" />
   </audio>
   <div id="root"></div>
   <script>
