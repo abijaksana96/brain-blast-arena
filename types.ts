@@ -5,6 +5,7 @@ export enum GamePhase {
   QUESTION_DISPLAY = 'QUESTION_DISPLAY', // 3 minutes timer
   TEAM_ANSWERING = 'TEAM_ANSWERING', // 5 seconds timer
   FEEDBACK = 'FEEDBACK', // Result shown briefly
+  GAME_FINISHED = 'GAME_FINISHED', // Game finished screen before leaderboard
   ROUND_OVER = 'ROUND_OVER',
 }
 

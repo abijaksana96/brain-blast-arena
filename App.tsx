@@ -5,6 +5,7 @@ import { Button } from './components/Button';
 import { Timer } from './components/Timer';
 import { Leaderboard } from './components/Leaderboard';
 import { BriefingSlides } from './components/BriefingSlides';
+import { GameFinished } from './components/GameFinished';
 import { Play, CheckCircle, XCircle, BrainCircuit, Users, SkipForward, TimerOff, Upload, FolderOpen, Image, Trash2, Shuffle } from 'lucide-react';
 
 // Utility to shuffle array (Fisher-Yates algorithm)
@@ -72,33 +73,24 @@ const App: React.FC = () => {
 
   // --- GAME LOOP LOGIC ---
 
+  const stopQuestionAudio = () => {
+    // Background music disabled - only sound effects remain
+    return;
+  };
+
   const startQuestionAudio = (forceRestart: boolean = false) => {
-    const audio = bgAudioRef.current;
-    if (!audio) return;
+    // Background music disabled - only sound effects remain
+    return;
+  };
 
-    const tracks = [
-      '/3-Minutes-Quiz-Music-for-Countdown.mp3',
-      '/(No Copyright Music) Corporate Technology [Presentation Music] by MokkaMusic  Crypto.mp3',
-      '/quiz-evaluation-loop-thinking-time-231582.mp3',
-    ];
-
-    const isAlreadyPlaying = !audio.paused && audio.currentTime > 0;
-    if (isAlreadyPlaying && !forceRestart) return;
-
-    audio.pause();
-    audio.onended = null;
-    audio.loop = false;
-
-    const playAtIndex = (index: number) => {
-      const nextIndex = (index + 1) % tracks.length;
-      audio.src = tracks[index];
-      audio.currentTime = 0;
-      audio.volume = 0.25;
-      audio.play().catch(() => { });
-      audio.onended = () => playAtIndex(nextIndex);
-    };
-
-    playAtIndex(0);
+  // Initialize AudioContext immediately to avoid browser autoplay policy
+  const initAudioContext = () => {
+    if (!audioCtxRef.current) {
+      audioCtxRef.current = new (window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext!)();
+    }
+    if (audioCtxRef.current.state === 'suspended') {
+      audioCtxRef.current.resume().catch(() => { });
+    }
   };
 
   const playCountdownBeep = (count: number) => {
@@ -157,6 +149,9 @@ const App: React.FC = () => {
   // NOTE: breaking-news sound removed to avoid replaying briefing audio here.
 
   const startRound = () => {
+    // Initialize audio context early to allow beep sounds
+    initAudioContext();
+
     // Stop slide audio if still playing (avoid overlap)
     if (slideAudioStopperRef.current) slideAudioStopperRef.current();
     // play dramatic breaking-news effect before countdown (removed - briefing audio must not restart)
@@ -172,9 +167,12 @@ const App: React.FC = () => {
 
   const nextQuestion = useCallback(() => {
     if (gameState.currentQuestionIndex >= QUESTIONS.length - 1) {
-      setGameState(prev => ({ ...prev, phase: GamePhase.ROUND_OVER }));
+      setGameState(prev => ({ ...prev, phase: GamePhase.GAME_FINISHED }));
       return;
     }
+
+    // Initialize audio context early to allow beep sounds
+    initAudioContext();
 
     setLastAnswerStatus(null);
     setLastScoreChange(null);
@@ -203,7 +201,7 @@ const App: React.FC = () => {
     const now = ctx.currentTime;
 
     if (status === 'correct') {
-      // Victory fanfare - ascending arpeggio
+      // Victory fanfare - ascending arpeggio (LOUDER)
       const notes = [523.25, 659.25, 783.99, 1046.50]; // C5, E5, G5, C6
       notes.forEach((freq, i) => {
         const osc = ctx.createOscillator();
@@ -211,7 +209,7 @@ const App: React.FC = () => {
         osc.type = 'sine';
         osc.frequency.setValueAtTime(freq, now + i * 0.12);
         gain.gain.setValueAtTime(0.0001, now + i * 0.12);
-        gain.gain.exponentialRampToValueAtTime(0.95, now + i * 0.12 + 0.02);
+        gain.gain.exponentialRampToValueAtTime(1.5, now + i * 0.12 + 0.02);
         gain.gain.exponentialRampToValueAtTime(0.0001, now + i * 0.12 + 0.3);
         osc.connect(gain);
         gain.connect(ctx.destination);
@@ -226,7 +224,7 @@ const App: React.FC = () => {
         osc.type = 'triangle';
         osc.frequency.setValueAtTime(freq, now + 0.5);
         gain.gain.setValueAtTime(0.0001, now + 0.5);
-        gain.gain.exponentialRampToValueAtTime(0.85, now + 0.52);
+        gain.gain.exponentialRampToValueAtTime(1.4, now + 0.52);
         gain.gain.exponentialRampToValueAtTime(0.0001, now + 1.2);
         osc.connect(gain);
         gain.connect(ctx.destination);
@@ -234,7 +232,7 @@ const App: React.FC = () => {
         osc.stop(now + 1.3);
       });
     } else if (status === 'wrong') {
-      // Buzzer sound - harsh descending
+      // Buzzer sound - harsh descending (LOUDER)
       const osc1 = ctx.createOscillator();
       const osc2 = ctx.createOscillator();
       const gain = ctx.createGain();
@@ -245,7 +243,7 @@ const App: React.FC = () => {
       osc2.frequency.setValueAtTime(205, now);
       osc2.frequency.exponentialRampToValueAtTime(75, now + 0.5);
       gain.gain.setValueAtTime(0.0001, now);
-      gain.gain.exponentialRampToValueAtTime(0.95, now + 0.02);
+      gain.gain.exponentialRampToValueAtTime(1.5, now + 0.02);
       gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.6);
       osc1.connect(gain);
       osc2.connect(gain);
@@ -255,7 +253,7 @@ const App: React.FC = () => {
       osc1.stop(now + 0.65);
       osc2.stop(now + 0.65);
     } else {
-      // Timeout - descending womp womp
+      // Timeout - descending womp womp (LOUDER)
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
       osc.type = 'sine';
@@ -264,9 +262,9 @@ const App: React.FC = () => {
       osc.frequency.setValueAtTime(350, now + 0.4);
       osc.frequency.exponentialRampToValueAtTime(100, now + 0.8);
       gain.gain.setValueAtTime(0.0001, now);
-      gain.gain.exponentialRampToValueAtTime(0.95, now + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.6, now + 0.3);
-      gain.gain.exponentialRampToValueAtTime(0.75, now + 0.4);
+      gain.gain.exponentialRampToValueAtTime(1.5, now + 0.02);
+      gain.gain.exponentialRampToValueAtTime(1.0, now + 0.3);
+      gain.gain.exponentialRampToValueAtTime(1.2, now + 0.4);
       gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.9);
       osc.connect(gain);
       gain.connect(ctx.destination);
@@ -350,23 +348,10 @@ const App: React.FC = () => {
     return () => { if (answerTimerRef.current) clearInterval(answerTimerRef.current); };
   }, [gameState.phase]); // Dependency handled via internal logic calling handleAnswerVerdict
 
-  // Duck background audio volume during TEAM_ANSWERING
+  // Duck background audio volume during TEAM_ANSWERING (disabled - no background music)
   useEffect(() => {
-    const audio = bgAudioRef.current;
-    if (!audio) return;
-
-    if (gameState.phase === GamePhase.TEAM_ANSWERING) {
-      if (bgVolumeRef.current === null) {
-        bgVolumeRef.current = audio.volume;
-      }
-      audio.volume = 0.01;
-      return;
-    }
-
-    if (bgVolumeRef.current !== null) {
-      audio.volume = bgVolumeRef.current;
-      bgVolumeRef.current = null;
-    }
+    // Background music disabled - no volume ducking needed
+    return;
   }, [gameState.phase]);
 
   // Beep countdown during TEAM_ANSWERING
@@ -391,28 +376,28 @@ const App: React.FC = () => {
 
     const now = ctx.currentTime;
 
-    // Clean consistent tick sound
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
+    if (current <= 3 && current >= 1) {
+      lastBeepRef.current = current;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(800, now);
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.exponentialRampToValueAtTime(0.95, now + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.15);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.2);
+    }
+  }, [gameState.answerTimer, gameState.phase]);
 
-    // Consistent frequency for all ticks
-    const freq = 1000;
-
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(freq, now);
-
-    gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.exponentialRampToValueAtTime(0.6, now + 0.005);
-    gain.gain.exponentialRampToValueAtTime(0.3, now + 0.08);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.15);
-
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.start(now);
-    osc.stop(now + 0.18);
-
-    lastBeepRef.current = current;
-  }, [gameState.phase, gameState.answerTimer]);
+  // Stop audio when game finishes
+  useEffect(() => {
+    if (gameState.phase === GamePhase.GAME_FINISHED) {
+      stopQuestionAudio();
+    }
+  }, [gameState.phase]);
 
   // No boom sound - removed per user request
 
@@ -586,34 +571,36 @@ const App: React.FC = () => {
       {/* LEFT (Desktop) / TOP (Mobile): Game Board */}
       <div className="flex-1 flex flex-col relative w-full min-h-0 overflow-hidden">
 
-        {/* Header Bar */}
-        <div className="h-14 lg:h-16 flex-none border-b border-slate-800 bg-slate-900/80 flex items-center justify-between px-4 lg:px-6 backdrop-blur-sm z-20">
-          <div className="flex items-center gap-2 lg:gap-3">
-            <BrainCircuit className="text-blue-500 w-5 h-5 lg:w-7 lg:h-7" />
-            <h1 className="font-display font-bold text-base lg:text-lg tracking-wider text-white">BRAIN BLAST</h1>
-          </div>
+        {/* Header Bar - Hide during fullscreen phases */}
+        {gameState.phase !== GamePhase.GAME_FINISHED && gameState.phase !== GamePhase.ROUND_OVER && (
+          <div className="h-14 lg:h-16 flex-none border-b border-slate-800 bg-slate-900/80 flex items-center justify-between px-4 lg:px-6 backdrop-blur-sm z-20">
+            <div className="flex items-center gap-2 lg:gap-3">
+              <BrainCircuit className="text-blue-500 w-5 h-5 lg:w-7 lg:h-7" />
+              <h1 className="font-display font-bold text-base lg:text-lg tracking-wider text-white">BRAIN BLAST</h1>
+            </div>
 
-          <div className="flex items-center gap-3 lg:gap-5">
-            <div className="flex flex-col items-end">
-              <span className="text-[8px] lg:text-[10px] uppercase text-slate-500 font-bold tracking-widest">Soal</span>
-              <span className="font-display font-bold text-sm lg:text-lg leading-none">
-                {gameState.currentQuestionIndex + 1} <span className="text-slate-600 text-xs">/ {QUESTIONS.length}</span>
-              </span>
-            </div>
-            <div className="h-5 lg:h-7 w-[1px] bg-slate-700"></div>
-            <div className="flex flex-col items-end">
-              <span className="text-[8px] lg:text-[10px] uppercase text-slate-500 font-bold tracking-widest">Tipe</span>
-              <span className={`font-display font-bold text-sm lg:text-base leading-none ${currentQuestion.difficulty === Difficulty.HARD ? 'text-red-400' : 'text-green-400'}`}>
-                {currentQuestion.difficulty}
-              </span>
-            </div>
-            <div className="h-5 lg:h-7 w-[1px] bg-slate-700"></div>
-            <div className="flex flex-col items-end">
-              <span className="text-[8px] lg:text-[10px] uppercase text-slate-500 font-bold tracking-widest">Poin</span>
-              <span className="font-display font-bold text-base lg:text-lg text-yellow-400 leading-none">{currentQuestion.points}</span>
+            <div className="flex items-center gap-3 lg:gap-5">
+              <div className="flex flex-col items-end">
+                <span className="text-[8px] lg:text-[10px] uppercase text-slate-500 font-bold tracking-widest">Soal</span>
+                <span className="font-display font-bold text-sm lg:text-lg leading-none">
+                  {gameState.currentQuestionIndex + 1} <span className="text-slate-600 text-xs">/ {QUESTIONS.length}</span>
+                </span>
+              </div>
+              <div className="h-5 lg:h-7 w-[1px] bg-slate-700"></div>
+              <div className="flex flex-col items-end">
+                <span className="text-[8px] lg:text-[10px] uppercase text-slate-500 font-bold tracking-widest">Tipe</span>
+                <span className={`font-display font-bold text-sm lg:text-base leading-none ${currentQuestion.difficulty === Difficulty.HARD ? 'text-red-400' : 'text-green-400'}`}>
+                  {currentQuestion.difficulty}
+                </span>
+              </div>
+              <div className="h-5 lg:h-7 w-[1px] bg-slate-700"></div>
+              <div className="flex flex-col items-end">
+                <span className="text-[8px] lg:text-[10px] uppercase text-slate-500 font-bold tracking-widest">Poin</span>
+                <span className="font-display font-bold text-base lg:text-lg text-yellow-400 leading-none">{currentQuestion.points}</span>
+              </div>
             </div>
           </div>
-        </div>
+        )}
 
         {/* Main Content Area */}
         <div className="flex-1 flex flex-col p-1 lg:p-2 items-center justify-center relative min-h-0 overflow-hidden">
@@ -642,23 +629,16 @@ const App: React.FC = () => {
             </div>
           )}
 
+          {gameState.phase === GamePhase.GAME_FINISHED && (
+            <GameFinished
+              onContinue={() => setGameState(prev => ({ ...prev, phase: GamePhase.ROUND_OVER }))}
+              totalQuestions={QUESTIONS.length}
+              topTeamName={[...teams].sort((a, b) => b.totalScore - a.totalScore)[0]?.name || 'Tim Juara'}
+            />
+          )}
+
           {gameState.phase === GamePhase.ROUND_OVER && (
-            <div className="text-center z-10 space-y-6 w-full px-4">
-              <h2 className="text-3xl lg:text-4xl font-display text-white">Ronde Selesai</h2>
-              <p className="text-slate-400">Silakan cek klasemen akhir.</p>
-              <div className="p-4 bg-slate-800 rounded-lg border border-slate-700 max-w-md mx-auto w-full">
-                <h3 className="text-xl font-bold mb-4">Top 5 Grand Final</h3>
-                <div className="space-y-2">
-                  {/* Filter Top 5 logic repeated for summary view */}
-                  {[...teams].sort((a, b) => b.totalScore - a.totalScore).slice(0, 5).map((t, i) => (
-                    <div key={t.id} className="flex justify-between w-full text-left border-b border-slate-700 pb-1">
-                      <span>{i + 1}. {t.name}</span>
-                      <span className="font-bold text-yellow-400">{t.totalScore}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
+            <Leaderboard teams={teams} activeTeamId={null} isFullScreen={true} />
           )}
 
           {(gameState.phase === GamePhase.QUESTION_DISPLAY ||
@@ -849,11 +829,14 @@ const App: React.FC = () => {
       </div>
 
       {/* RIGHT (Desktop) / BOTTOM (Mobile): Leaderboard - Compact */}
-      <Leaderboard
-        teams={teams}
-        activeTeamId={gameState.activeTeamId}
-        className="w-full lg:w-64 xl:w-72 h-40 lg:h-full border-t lg:border-t-0 lg:border-l flex-none"
-      />
+      {/* Hide sidebar when showing fullscreen views */}
+      {gameState.phase !== GamePhase.GAME_FINISHED && gameState.phase !== GamePhase.ROUND_OVER && (
+        <Leaderboard
+          teams={teams}
+          activeTeamId={gameState.activeTeamId}
+          className="w-full lg:w-64 xl:w-72 h-40 lg:h-full border-t lg:border-t-0 lg:border-l flex-none"
+        />
+      )}
 
     </div>
   );
