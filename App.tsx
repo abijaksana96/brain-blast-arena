@@ -376,7 +376,7 @@ const App: React.FC = () => {
 
     const now = ctx.currentTime;
 
-    if (current <= 3 && current >= 1) {
+    if (current <= 5 && current >= 1) {
       lastBeepRef.current = current;
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
@@ -572,7 +572,7 @@ const App: React.FC = () => {
       <div className="flex-1 flex flex-col relative w-full min-h-0 overflow-hidden">
 
         {/* Header Bar - Hide during fullscreen phases */}
-        {gameState.phase !== GamePhase.GAME_FINISHED && gameState.phase !== GamePhase.ROUND_OVER && (
+        {gameState.phase !== GamePhase.GAME_FINISHED && gameState.phase !== GamePhase.ROUND_OVER && gameState.phase !== GamePhase.INTRO && (
           <div className="h-14 lg:h-16 flex-none border-b border-slate-800 bg-slate-900/80 flex items-center justify-between px-4 lg:px-6 backdrop-blur-sm z-20">
             <div className="flex items-center gap-2 lg:gap-3">
               <BrainCircuit className="text-blue-500 w-5 h-5 lg:w-7 lg:h-7" />
